@@ -1,0 +1,97 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Authentication & Authorization Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      // Verified Firebase custom claim or active role document in admin_roles
+      return isAuthenticated() && (
+        request.auth.token.admin == true ||
+        (exists(/databases/$(database)/documents/admin_roles/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/admin_roles/$(request.auth.uid)).data.active == true)
+      );
+    }
+
+    // ---------------------------------------------------------
+    // 0. Administrator Roles (`admin_roles/{userId}`)
+    // - Authenticated users can read ONLY their own role document.
+    // - Writes are completely disabled for clients to prevent privilege escalation.
+    // ---------------------------------------------------------
+    match /admin_roles/{userId} {
+      allow read: if isOwner(userId);
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------
+    // 1. Student User Profiles (`users/{userId}`)
+    // - Authenticated students can read and write ONLY their own profile.
+    // - Admins can read all profiles to manage students in Admin Dashboard.
+    // - Students CANNOT modify other students' profiles or change their own UID.
+    // - Passwords must NEVER be stored in Firestore.
+    // ---------------------------------------------------------
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId)
+                    && request.resource.data.uid == userId
+                    && !('password' in request.resource.data)
+                    && !('confirmPassword' in request.resource.data);
+      allow update: if isOwner(userId)
+                    && request.resource.data.uid == userId
+                    && !('password' in request.resource.data)
+                    && !('confirmPassword' in request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // ---------------------------------------------------------
+    // 2. Question Bank (`questions/{questionId}`)
+    // - Active questions are readable for CBT practice and mock tests.
+    // - Inactive questions and write operations (create, update, delete)
+    //   are strictly restricted to authenticated administrators.
+    // ---------------------------------------------------------
+    match /questions/{questionId} {
+      allow read: if (resource == null || resource.data.isActive == true) || isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ---------------------------------------------------------
+    // 3. Access Entitlements (`entitlements/{entitlementId}` & `access_entitlements/{entitlementId}`)
+    // - Students can read only their own entitlement records.
+    // - Only administrators can grant, revoke, or modify entitlements.
+    // - Students CANNOT grant themselves access or tamper with expiration.
+    // ---------------------------------------------------------
+    match /entitlements/{entitlementId} {
+      allow read: if (isAuthenticated() && resource.data.studentUid == request.auth.uid) || isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /access_entitlements/{entitlementId} {
+      allow read: if (isAuthenticated() && resource.data.studentUid == request.auth.uid) || isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ---------------------------------------------------------
+    // 4. CBT Test History Records (`cbtHistory/{historyId}`)
+    // - Students can create and read their own test results and performance stats.
+    // - Admins can read records for audit and performance metrics.
+    // - Students cannot tamper with other students' test history.
+    // ---------------------------------------------------------
+    match /cbtHistory/{historyId} {
+      allow read: if (isAuthenticated() && resource.data.studentUid == request.auth.uid) || isAdmin();
+      allow create: if isAuthenticated() && request.resource.data.studentUid == request.auth.uid;
+      allow update, delete: if (isAuthenticated() && resource.data.studentUid == request.auth.uid) || isAdmin();
+    }
+
+    // Default deny all other collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

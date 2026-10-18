@@ -1,0 +1,6 @@
+{
+  "name": "ExamPrep CBT",
+  "description": "Professional CBT examination practice app for Nigerian students preparing for JAMB, WAEC, and NECO.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
