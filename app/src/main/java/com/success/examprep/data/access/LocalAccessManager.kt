@@ -25,8 +25,13 @@ class LocalAccessManager : AccessManager {
     val accessStateFlow: StateFlow<Map<Pair<ExamType, SubjectType>, Boolean>> = _accessStateFlow.asStateFlow()
 
     override fun hasFullAccess(examType: ExamType, subject: SubjectType): Boolean {
-        if (accessMap[Pair(examType, subject)] == true) return true
-        return entitlementChecker?.invoke(examType, subject) == true
+        // Enforce trusted entitlement architecture as authoritative:
+        // When entitlementChecker is configured, local UI state alone cannot grant paid access.
+        val checker = entitlementChecker
+        if (checker != null) {
+            return checker.invoke(examType, subject)
+        }
+        return accessMap[Pair(examType, subject)] == true
     }
 
     override fun canAccessQuestion(

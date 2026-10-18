@@ -114,13 +114,17 @@ fun AppNavGraph(
             val examId = backStackEntry.arguments?.getString("examId")
             val examType = ExamType.fromId(examId)
 
+            val currentUser = authRepository.getCurrentUser()
+
             SubjectSelectionScreen(
                 examType = examType,
                 onNavigateBack = { navController.popBackStack() },
                 onSubjectSelected = { subject ->
                     cbtViewModel.startExam(examType, subject.id)
                     navController.navigate(Screen.Cbt.createRoute(examType.id, subject.id))
-                }
+                },
+                entitlementRepository = entitlementRepository,
+                currentStudentUid = currentUser?.uid
             )
         }
 

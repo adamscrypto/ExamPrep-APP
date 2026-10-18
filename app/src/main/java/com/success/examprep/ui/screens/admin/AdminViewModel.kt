@@ -582,10 +582,11 @@ class AdminViewModel(
         }
     }
 
-    fun grantAccess(
+    fun grantExamAccess(
         student: StudentUser,
         examType: ExamType,
-        subjectType: SubjectType,
+        subjects: List<SubjectType>,
+        isExamLevel: Boolean,
         reason: String,
         durationDays: Int?
     ) {
@@ -593,23 +594,30 @@ class AdminViewModel(
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
             val adminEmail = authRepository.getCurrentUser()?.email ?: "admin@examprep.cbt"
             val expiresAt = durationDays?.let { System.currentTimeMillis() + it.toLong() * 24 * 60 * 60 * 1000 }
-            val result = entitlementRepository.grantManualAccess(
+            val result = entitlementRepository.grantExamAccess(
                 studentUid = student.uid,
                 studentEmail = student.email,
                 studentName = student.displayName,
                 examType = examType,
-                subjectType = subjectType,
+                subjects = subjects,
+                isExamLevel = isExamLevel,
                 grantedByAdmin = adminEmail,
                 reason = reason,
                 expiresAt = expiresAt
             )
 
             if (result.isSuccess) {
+                val detailStr = if (isExamLevel) {
+                    "all configured subjects for ${examType.displayName}"
+                } else {
+                    "${subjects.size} subjects (${subjects.joinToString { it.displayName }}) for ${examType.displayName}"
+                }
                 _uiState.update {
                     it.copy(
                         isGrantAccessDialogOpen = false,
                         grantTargetStudent = null,
-                        successMessage = "Access successfully granted for ${examType.displayName} ${subjectType.displayName}!"
+                        isLoading = false,
+                        successMessage = "Full access granted: $detailStr for ${student.displayName}!"
                     )
                 }
                 loadAllData()
@@ -622,6 +630,23 @@ class AdminViewModel(
                 }
             }
         }
+    }
+
+    fun grantAccess(
+        student: StudentUser,
+        examType: ExamType,
+        subjectType: SubjectType,
+        reason: String,
+        durationDays: Int?
+    ) {
+        grantExamAccess(
+            student = student,
+            examType = examType,
+            subjects = listOf(subjectType),
+            isExamLevel = false,
+            reason = reason,
+            durationDays = durationDays
+        )
     }
 
     fun revokeAccess(entitlement: AccessEntitlement) {

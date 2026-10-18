@@ -27,6 +27,9 @@ interface EntitlementRepository {
     suspend fun getAllEntitlements(): List<AccessEntitlement>
     suspend fun getEntitlementsForStudent(studentUid: String): List<AccessEntitlement>
 
+    /**
+     * Legacy single-subject grant maintained for backward compatibility.
+     */
     suspend fun grantManualAccess(
         studentUid: String,
         studentEmail: String,
@@ -37,6 +40,40 @@ interface EntitlementRepository {
         reason: String = "",
         expiresAt: Long? = null
     ): Result<AccessEntitlement>
+
+    /**
+     * Grants full exam access for a student in one atomic operation.
+     * - For JAMB: [subjects] must contain exactly 4 distinct subjects, including compulsory Use of English.
+     * - For WAEC and NECO: [isExamLevel] = true grants full access across all configured and future subjects.
+     * - Preserves valid access for other examinations.
+     * - Replaces/upgrades any existing entitlement for the same exam board to prevent duplicate, partial or inconsistent grants.
+     */
+    suspend fun grantExamAccess(
+        studentUid: String,
+        studentEmail: String,
+        studentName: String,
+        examType: ExamType,
+        subjects: List<SubjectType> = emptyList(),
+        isExamLevel: Boolean = false,
+        grantedByAdmin: String,
+        reason: String = "",
+        expiresAt: Long? = null
+    ): Result<AccessEntitlement>
+
+    /**
+     * Updates the 4-subject combination for a student's active JAMB entitlement.
+     * Requires exactly four distinct subjects including compulsory Use of English.
+     * Changing a JAMB combination preserves valid access for other examinations and does NOT delete historical CBT results.
+     */
+    suspend fun updateStudentJambCombination(
+        studentUid: String,
+        subjects: List<SubjectType>
+    ): Result<AccessEntitlement>
+
+    /**
+     * Returns the 4 subjects of the active JAMB entitlement for [studentUid], or null if none active.
+     */
+    suspend fun getStudentJambCombination(studentUid: String): List<SubjectType>?
 
     suspend fun revokeAccess(
         entitlementId: String,
@@ -60,7 +97,7 @@ interface EntitlementRepository {
 }
 
 /**
- * Concrete implementation supporting both Firestore `access_entitlements` collection
+ * Concrete implementation supporting both Firestore `entitlements` collection
  * and persistent local caching for 100% offline availability.
  */
 class DefaultEntitlementRepository(
@@ -109,14 +146,61 @@ class DefaultEntitlementRepository(
         grantedByAdmin: String,
         reason: String,
         expiresAt: Long?
+    ): Result<AccessEntitlement> {
+        return grantExamAccess(
+            studentUid = studentUid,
+            studentEmail = studentEmail,
+            studentName = studentName,
+            examType = examType,
+            subjects = listOf(subjectType),
+            isExamLevel = false,
+            grantedByAdmin = grantedByAdmin,
+            reason = reason,
+            expiresAt = expiresAt
+        )
+    }
+
+    override suspend fun grantExamAccess(
+        studentUid: String,
+        studentEmail: String,
+        studentName: String,
+        examType: ExamType,
+        subjects: List<SubjectType>,
+        isExamLevel: Boolean,
+        grantedByAdmin: String,
+        reason: String,
+        expiresAt: Long?
     ): Result<AccessEntitlement> = withContext(Dispatchers.IO) {
+        // Validation for JAMB: exactly four distinct subjects, compulsory English
+        val finalSubjects = if (examType == ExamType.JAMB) {
+            val distinctSubjects = subjects.distinct()
+            if (distinctSubjects.size != 4) {
+                return@withContext Result.failure(
+                    IllegalArgumentException("JAMB access must cover exactly four distinct subjects. Received ${distinctSubjects.size}.")
+                )
+            }
+            if (!distinctSubjects.contains(SubjectType.ENGLISH)) {
+                return@withContext Result.failure(
+                    IllegalArgumentException("JAMB access must include compulsory Use of English.")
+                )
+            }
+            distinctSubjects
+        } else {
+            subjects.distinct()
+        }
+
+        // For WAEC and NECO: if isExamLevel is requested, it covers all configured and future subjects
+        val primarySubject = finalSubjects.firstOrNull() ?: SubjectType.ENGLISH
+
         val newEntitlement = AccessEntitlement(
             id = "ent_" + UUID.randomUUID().toString().take(12),
             studentUid = studentUid,
             studentEmail = studentEmail,
             studentName = studentName,
             examType = examType,
-            subjectType = subjectType,
+            subjectType = primarySubject,
+            isExamLevel = isExamLevel,
+            subjects = if (isExamLevel) emptyList() else finalSubjects,
             accessType = AccessType.MANUAL_ADMIN,
             status = EntitlementStatus.ACTIVE,
             grantedAt = System.currentTimeMillis(),
@@ -127,17 +211,18 @@ class DefaultEntitlementRepository(
             updatedAt = System.currentTimeMillis()
         )
 
-        // Update in-memory and local cache
+        // Single atomic operation:
+        // Remove prior entitlement for this student for the SAME exam type,
+        // preserving valid access for other examinations!
         val currentList = _entitlements.value.toMutableList()
-        // Deactivate any previous entitlement for this exact student, exam, and subject
         currentList.removeIf {
-            it.studentUid == studentUid && it.examType == examType && it.subjectType == subjectType
+            it.studentUid == studentUid && it.examType == examType
         }
         currentList.add(0, newEntitlement)
         _entitlements.value = currentList
         saveToPrefs(currentList)
 
-        // Sync with Firestore if available
+        // Sync with Firestore
         val db = getFirestore()
         if (db != null) {
             try {
@@ -152,6 +237,76 @@ class DefaultEntitlementRepository(
         }
 
         Result.success(newEntitlement)
+    }
+
+    override suspend fun updateStudentJambCombination(
+        studentUid: String,
+        subjects: List<SubjectType>
+    ): Result<AccessEntitlement> = withContext(Dispatchers.IO) {
+        val distinct = subjects.distinct()
+        if (distinct.size != 4) {
+            return@withContext Result.failure(
+                IllegalArgumentException("JAMB combination must contain exactly four distinct subjects.")
+            )
+        }
+        if (!distinct.contains(SubjectType.ENGLISH)) {
+            return@withContext Result.failure(
+                IllegalArgumentException("JAMB combination must include compulsory Use of English.")
+            )
+        }
+
+        val currentList = _entitlements.value.toMutableList()
+        val index = currentList.indexOfFirst {
+            it.studentUid == studentUid && it.examType == ExamType.JAMB && it.isCurrentlyActive
+        }
+
+        if (index == -1) {
+            return@withContext Result.failure(
+                IllegalStateException("No active JAMB entitlement found for this student to update combination.")
+            )
+        }
+
+        val existing = currentList[index]
+        val updated = existing.copy(
+            subjects = distinct,
+            subjectType = distinct.first(),
+            updatedAt = System.currentTimeMillis()
+        )
+        currentList[index] = updated
+        _entitlements.value = currentList
+        saveToPrefs(currentList)
+
+        // Sync with Firestore
+        val db = getFirestore()
+        if (db != null) {
+            try {
+                db.collection(COLLECTION_NAME)
+                    .document(updated.id)
+                    .update(
+                        mapOf(
+                            "subjects" to distinct.map { it.id },
+                            "subjectType" to distinct.first().id,
+                            "updatedAt" to updated.updatedAt
+                        )
+                    ).await()
+            } catch (_: Exception) {
+                // Offline fallback
+            }
+        }
+
+        Result.success(updated)
+    }
+
+    override suspend fun getStudentJambCombination(studentUid: String): List<SubjectType>? = withContext(Dispatchers.IO) {
+        val jambEnt = _entitlements.value.firstOrNull {
+            it.studentUid == studentUid && it.examType == ExamType.JAMB && it.isCurrentlyActive
+        } ?: return@withContext null
+
+        if (jambEnt.subjects.isNotEmpty()) {
+            jambEnt.subjects
+        } else {
+            listOf(jambEnt.subjectType)
+        }
     }
 
     override suspend fun revokeAccess(
@@ -212,8 +367,7 @@ class DefaultEntitlementRepository(
         val studentEntitlements = _entitlements.value.filter { it.studentUid == studentUid }
         return studentEntitlements.any { entitlement ->
             entitlement.examType == examType &&
-                entitlement.subjectType == subjectType &&
-                entitlement.isCurrentlyActive
+                entitlement.coversSubject(subjectType)
         }
     }
 
@@ -223,7 +377,6 @@ class DefaultEntitlementRepository(
             try {
                 var snapshot = db.collection(COLLECTION_NAME).get().await()
                 if (snapshot.isEmpty) {
-                    // Check fallback collection if exists
                     snapshot = db.collection("access_entitlements").get().await()
                 }
                 if (!snapshot.isEmpty) {
@@ -251,6 +404,10 @@ class DefaultEntitlementRepository(
                 put("studentName", ent.studentName)
                 put("examType", ent.examType.id)
                 put("subjectType", ent.subjectType.id)
+                put("isExamLevel", ent.isExamLevel)
+                val subArray = JSONArray()
+                ent.subjects.forEach { s -> subArray.put(s.id) }
+                put("subjects", subArray)
                 put("accessType", ent.accessType.name)
                 put("status", ent.status.name)
                 put("grantedAt", ent.grantedAt)
@@ -274,6 +431,14 @@ class DefaultEntitlementRepository(
                 val obj = array.getJSONObject(i)
                 val examType = ExamType.fromId(obj.getString("examType"))
                 val subjectType = SubjectType.fromId(obj.getString("subjectType"))
+                val isExamLevel = obj.optBoolean("isExamLevel", false)
+                val subjectsList = mutableListOf<SubjectType>()
+                val subArray = obj.optJSONArray("subjects")
+                if (subArray != null) {
+                    for (j in 0 until subArray.length()) {
+                        subjectsList.add(SubjectType.fromId(subArray.getString(j)))
+                    }
+                }
                 val accessType = try {
                     AccessType.valueOf(obj.optString("accessType", AccessType.MANUAL_ADMIN.name))
                 } catch (_: Exception) {
@@ -296,6 +461,8 @@ class DefaultEntitlementRepository(
                         studentName = obj.optString("studentName", ""),
                         examType = examType,
                         subjectType = subjectType,
+                        isExamLevel = isExamLevel,
+                        subjects = subjectsList,
                         accessType = accessType,
                         status = status,
                         grantedAt = obj.optLong("grantedAt", System.currentTimeMillis()),
@@ -321,6 +488,8 @@ class DefaultEntitlementRepository(
             "studentName" to ent.studentName,
             "examType" to ent.examType.id,
             "subjectType" to ent.subjectType.id,
+            "isExamLevel" to ent.isExamLevel,
+            "subjects" to ent.subjects.map { it.id },
             "accessType" to ent.accessType.name,
             "status" to ent.status.name,
             "grantedAt" to ent.grantedAt,
@@ -337,6 +506,9 @@ class DefaultEntitlementRepository(
             val studentUid = data["studentUid"] as? String ?: return null
             val examStr = data["examType"] as? String ?: ExamType.JAMB.id
             val subjectStr = data["subjectType"] as? String ?: SubjectType.MATHEMATICS.id
+            val isExamLevel = data["isExamLevel"] as? Boolean ?: false
+            val rawSubjects = data["subjects"] as? List<*> ?: emptyList<Any>()
+            val subjects = rawSubjects.mapNotNull { (it as? String)?.let { s -> SubjectType.fromId(s) } }
             val accessTypeStr = data["accessType"] as? String ?: AccessType.MANUAL_ADMIN.name
             val statusStr = data["status"] as? String ?: EntitlementStatus.ACTIVE.name
 
@@ -347,6 +519,8 @@ class DefaultEntitlementRepository(
                 studentName = data["studentName"] as? String ?: "",
                 examType = ExamType.fromId(examStr),
                 subjectType = SubjectType.fromId(subjectStr),
+                isExamLevel = isExamLevel,
+                subjects = subjects,
                 accessType = try { AccessType.valueOf(accessTypeStr) } catch (_: Exception) { AccessType.MANUAL_ADMIN },
                 status = try { EntitlementStatus.valueOf(statusStr) } catch (_: Exception) { EntitlementStatus.ACTIVE },
                 grantedAt = (data["grantedAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),

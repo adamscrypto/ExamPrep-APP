@@ -392,8 +392,8 @@ fun AdminDashboardScreen(
             students = uiState.students,
             preselectedStudent = uiState.grantTargetStudent,
             onDismiss = { viewModel.closeGrantAccessDialog() },
-            onGrant = { student, exam, subject, reason, duration ->
-                viewModel.grantAccess(student, exam, subject, reason, duration)
+            onGrant = { student, exam, subjects, isExamLevel, reason, duration ->
+                viewModel.grantExamAccess(student, exam, subjects, isExamLevel, reason, duration)
             }
         )
     }
@@ -1385,7 +1385,7 @@ fun AdminAccessManagementTab(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "${ent.studentName.ifBlank { "Student" }} • ${ent.examType.displayName} ${ent.subjectType.displayName}",
+                            text = "${ent.studentName.ifBlank { "Student" }} • ${ent.examType.displayName} (${ent.getSubjectsSummary()})",
                             style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
                         )
                         StatusPill(status = ent.effectiveStatus)

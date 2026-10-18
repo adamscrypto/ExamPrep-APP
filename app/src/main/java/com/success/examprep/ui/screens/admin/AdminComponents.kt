@@ -749,22 +749,69 @@ fun GrantAccessDialog(
     students: List<StudentUser>,
     preselectedStudent: StudentUser? = null,
     onDismiss: () -> Unit,
-    onGrant: (student: StudentUser, examType: ExamType, subjectType: SubjectType, reason: String, durationDays: Int?) -> Unit
+    onGrant: (
+        student: StudentUser,
+        examType: ExamType,
+        subjects: List<SubjectType>,
+        isExamLevel: Boolean,
+        reason: String,
+        durationDays: Int?
+    ) -> Unit
 ) {
     var selectedStudent by remember { mutableStateOf(preselectedStudent ?: students.firstOrNull()) }
+    var searchQuery by remember { mutableStateOf("") }
     var selectedExam by remember { mutableStateOf(ExamType.JAMB) }
-    var selectedSubject by remember { mutableStateOf(SubjectType.MATHEMATICS) }
+
+    // For JAMB: exactly 4 subjects, English compulsory and locked
+    var jambSelectedSubjects by remember {
+        mutableStateOf(
+            listOf(
+                SubjectType.ENGLISH,
+                SubjectType.MATHEMATICS,
+                SubjectType.PHYSICS,
+                SubjectType.CHEMISTRY
+            )
+        )
+    }
+
+    // For WAEC and NECO: all configured subjects option
+    var isAllConfiguredSubjects by remember { mutableStateOf(true) }
+    var waecNecoSelectedSubject by remember { mutableStateOf(SubjectType.MATHEMATICS) }
+
     var reason by remember { mutableStateOf("Manual admin access approval") }
     var durationDays by remember { mutableStateOf<Int?>(null) } // null = Permanent
 
-    var studentMenuExpanded by remember { mutableStateOf(false) }
-    var subjectMenuExpanded by remember { mutableStateOf(false) }
+    var studentSearchDropdownExpanded by remember { mutableStateOf(false) }
+
+    // Filter students by name, phone, student ID, email or UID
+    val filteredStudents = remember(students, searchQuery) {
+        val trimmed = searchQuery.trim().lowercase()
+        if (trimmed.isBlank()) {
+            students
+        } else {
+            students.filter { s ->
+                s.displayName.lowercase().contains(trimmed) ||
+                    (s.phone != null && s.phone.contains(trimmed)) ||
+                    (s.studentId != null && s.studentId.lowercase().contains(trimmed)) ||
+                    s.email.lowercase().contains(trimmed) ||
+                    s.uid.lowercase().contains(trimmed)
+            }
+        }
+    }
+
+    val isJambValid = selectedExam != ExamType.JAMB || (
+        jambSelectedSubjects.size == 4 &&
+            jambSelectedSubjects.contains(SubjectType.ENGLISH) &&
+            jambSelectedSubjects.distinct().size == 4
+    )
+
+    val isFormValid = selectedStudent != null && reason.isNotBlank() && isJambValid
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                text = "Grant Manual Full Access",
+                text = "Grant Exam Access",
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
             )
         },
@@ -773,118 +820,409 @@ fun GrantAccessDialog(
                 modifier = Modifier
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Text(
-                    text = "Grant full CBT question access for a specific examination and subject. This manual entitlement will unlock all questions 21+ immediately.",
+                    text = "Grant full CBT question access for a selected student. This updates trusted entitlements immediately and unlocks questions 21+.",
                     style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
                 )
 
-                // Student Selection
+                // 1. Student Search and Identification
+                Text(
+                    text = "1. Student Identification: *",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                )
+
                 if (preselectedStudent == null) {
-                    ExposedDropdownMenuBox(
-                        expanded = studentMenuExpanded,
-                        onExpandedChange = { studentMenuExpanded = it }
-                    ) {
-                        OutlinedTextField(
-                            value = selectedStudent?.let { "${it.displayName} (${it.email})" } ?: "Select Student",
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("Select Student *") },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = studentMenuExpanded) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .menuAnchor()
-                        )
-                        ExposedDropdownMenu(
-                            expanded = studentMenuExpanded,
-                            onDismissRequest = { studentMenuExpanded = false }
-                        ) {
-                            students.forEach { s ->
-                                DropdownMenuItem(
-                                    text = { Text("${s.displayName} (${s.email})") },
-                                    onClick = {
-                                        selectedStudent = s
-                                        studentMenuExpanded = false
-                                    }
-                                )
-                            }
-                        }
-                    }
-                } else {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = {
+                            searchQuery = it
+                            studentSearchDropdownExpanded = true
+                        },
+                        placeholder = { Text("Search by name, phone, or student ID...") },
+                        label = { Text("Search Student") },
+                        leadingIcon = {
                             Icon(imageVector = Icons.Default.Person, contentDescription = null, tint = EmeraldGreenPrimary)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Column {
-                                Text(text = preselectedStudent.displayName, fontWeight = FontWeight.Bold)
-                                Text(text = preselectedStudent.email, style = MaterialTheme.typography.bodySmall)
+                        },
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }) {
+                                    Icon(imageVector = Icons.Default.Close, contentDescription = "Clear search")
+                                }
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("admin_grant_student_search")
+                    )
+
+                    // Results dropdown/picker
+                    if (filteredStudents.isNotEmpty() && (searchQuery.isNotBlank() || studentSearchDropdownExpanded)) {
+                        Card(
+                            shape = RoundedCornerShape(8.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                            modifier = Modifier.fillMaxWidth().height(160.dp)
+                        ) {
+                            LazyColumn(modifier = Modifier.padding(4.dp)) {
+                                items(filteredStudents) { s ->
+                                    val isPicked = selectedStudent?.uid == s.uid
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = if (isPicked) EmeraldGreenPrimary.copy(alpha = 0.15f) else Color.Transparent,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                selectedStudent = s
+                                                studentSearchDropdownExpanded = false
+                                            }
+                                            .padding(6.dp)
+                                    ) {
+                                        Column {
+                                            Text(
+                                                text = s.displayName,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 13.sp,
+                                                color = if (isPicked) EmeraldGreenDark else MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Text(
+                                                text = "ID: ${s.studentId ?: "N/A"} • Phone: ${s.phone ?: "N/A"} • Email: ${s.email.ifBlank { "N/A" }}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
                 }
 
-                // Exam Board Selection
-                Text("Select Examination Board: *", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                // Identifying card for the currently selected student
+                selectedStudent?.let { student ->
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = EmeraldGreenPrimary.copy(alpha = 0.1f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, EmeraldGreenPrimary.copy(alpha = 0.4f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("admin_grant_confirmed_student_card")
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = "Confirmed student",
+                                    tint = EmeraldGreenPrimary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = student.displayName,
+                                    fontWeight = FontWeight.Bold,
+                                    color = EmeraldGreenDark,
+                                    style = MaterialTheme.typography.titleSmall
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Phone: ${student.phone ?: "Not registered"}  •  Student ID: ${student.studentId ?: "None"}",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "Email: ${student.email.ifBlank { "No email (PIN login only)" }}  •  UID: ${student.uid.take(12)}...",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                } ?: run {
+                    Text(
+                        text = "No student selected. Please search and select a student above.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+
+                // 2. Exam Board Selection
+                Text(
+                    text = "2. Select Examination Board: *",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     ExamType.entries.forEach { exam ->
                         val isSelected = selectedExam == exam
                         Surface(
                             shape = RoundedCornerShape(8.dp),
                             color = if (isSelected) EmeraldGreenPrimary else MaterialTheme.colorScheme.surfaceVariant,
-                            modifier = Modifier.clickable { selectedExam = exam }
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { selectedExam = exam }
+                                .testTag("admin_grant_exam_${exam.id}")
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(vertical = 8.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = exam.displayName,
+                                    style = MaterialTheme.typography.labelMedium.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
+                                    )
+                                )
+                                Text(
+                                    text = exam.badgeText,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontSize = 10.sp,
+                                        color = if (isSelected) Color.White.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // 3. Subject Configuration per Examination
+                if (selectedExam == ExamType.JAMB) {
+                    // JAMB combination: exactly 4 subjects, English compulsory and locked
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = exam.displayName,
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
-                                ),
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                text = "3. JAMB Combination (4 Subjects): *",
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
                             )
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (jambSelectedSubjects.size == 4) EmeraldGreenPrimary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.errorContainer
+                            ) {
+                                Text(
+                                    text = "${jambSelectedSubjects.size} / 4 Selected",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (jambSelectedSubjects.size == 4) EmeraldGreenDark else MaterialTheme.colorScheme.error
+                                    ),
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
                         }
-                    }
-                }
 
-                // Subject Selection
-                ExposedDropdownMenuBox(
-                    expanded = subjectMenuExpanded,
-                    onExpandedChange = { subjectMenuExpanded = it }
-                ) {
-                    OutlinedTextField(
-                        value = selectedSubject.displayName,
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text("Subject *") },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = subjectMenuExpanded) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .menuAnchor()
-                    )
-                    ExposedDropdownMenu(
-                        expanded = subjectMenuExpanded,
-                        onDismissRequest = { subjectMenuExpanded = false }
-                    ) {
-                        SubjectType.entries.forEach { sub ->
-                            DropdownMenuItem(
-                                text = { Text(sub.displayName) },
-                                onClick = {
-                                    selectedSubject = sub
-                                    subjectMenuExpanded = false
+                        Text(
+                            text = "Use of English is compulsory and locked. Select exactly 3 other subjects to complete the required 4-subject combination.",
+                            style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        )
+
+                        // Compulsory English card
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = EmeraldGreenDark.copy(alpha = 0.08f),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, EmeraldGreenDark.copy(alpha = 0.3f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = "Compulsory",
+                                    tint = EmeraldGreenDark,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                    Text(
+                                        text = "Use of English",
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    Text(
+                                        text = "Compulsory for all JAMB candidates (Locked)",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
-                            )
+                            }
+                        }
+
+                        // Selectable other subjects (pick exactly 3)
+                        val otherSubjects = SubjectType.entries.filter { it != SubjectType.ENGLISH }
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            otherSubjects.forEach { sub ->
+                                val isChecked = jambSelectedSubjects.contains(sub)
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = if (isChecked) EmeraldGreenPrimary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            val current = jambSelectedSubjects.toMutableList()
+                                            if (isChecked) {
+                                                current.remove(sub)
+                                            } else {
+                                                if (current.size < 4) {
+                                                    current.add(sub)
+                                                }
+                                            }
+                                            jambSelectedSubjects = current
+                                        }
+                                        .padding(vertical = 2.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Checkbox(
+                                            checked = isChecked,
+                                            onCheckedChange = { checked ->
+                                                val current = jambSelectedSubjects.toMutableList()
+                                                if (checked) {
+                                                    if (current.size < 4 && !current.contains(sub)) {
+                                                        current.add(sub)
+                                                    }
+                                                } else {
+                                                    current.remove(sub)
+                                                }
+                                                jambSelectedSubjects = current
+                                            },
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = sub.displayName,
+                                            style = MaterialTheme.typography.bodySmall.copy(
+                                                fontWeight = if (isChecked) FontWeight.Bold else FontWeight.Normal
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // WAEC and NECO: all-configured-subjects grant option
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "3. Subject Scope for ${selectedExam.displayName}: *",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                        )
+
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (isAllConfiguredSubjects) EmeraldGreenPrimary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant,
+                            border = if (isAllConfiguredSubjects) androidx.compose.foundation.BorderStroke(1.5.dp, EmeraldGreenPrimary) else null,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { isAllConfiguredSubjects = true }
+                                .padding(2.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = if (isAllConfiguredSubjects) Icons.Default.CheckCircle else Icons.Default.LockOpen,
+                                    contentDescription = null,
+                                    tint = if (isAllConfiguredSubjects) EmeraldGreenDark else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = "All Configured Subjects (Recommended)",
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    Text(
+                                        text = "Full access to all ${selectedExam.getAvailableSubjects().size} subjects configured for ${selectedExam.displayName}, including any subjects added in the future.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+
+                        // Specific single subject option as secondary choice
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (!isAllConfiguredSubjects) EmeraldGreenPrimary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant,
+                            border = if (!isAllConfiguredSubjects) androidx.compose.foundation.BorderStroke(1.5.dp, EmeraldGreenPrimary) else null,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { isAllConfiguredSubjects = false }
+                                .padding(2.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = if (!isAllConfiguredSubjects) Icons.Default.CheckCircle else Icons.Default.Person,
+                                    contentDescription = null,
+                                    tint = if (!isAllConfiguredSubjects) EmeraldGreenDark else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = "Single Specific Subject Only",
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    Text(
+                                        text = "Grant access to only one selected subject for this exam.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+
+                        if (!isAllConfiguredSubjects) {
+                            var waecSubjectMenuExpanded by remember { mutableStateOf(false) }
+                            ExposedDropdownMenuBox(
+                                expanded = waecSubjectMenuExpanded,
+                                onExpandedChange = { waecSubjectMenuExpanded = it }
+                            ) {
+                                OutlinedTextField(
+                                    value = waecNecoSelectedSubject.displayName,
+                                    onValueChange = {},
+                                    readOnly = true,
+                                    label = { Text("Select Single Subject") },
+                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = waecSubjectMenuExpanded) },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .menuAnchor()
+                                )
+                                ExposedDropdownMenu(
+                                    expanded = waecSubjectMenuExpanded,
+                                    onDismissRequest = { waecSubjectMenuExpanded = false }
+                                ) {
+                                    SubjectType.entries.forEach { sub ->
+                                        DropdownMenuItem(
+                                            text = { Text(sub.displayName) },
+                                            onClick = {
+                                                waecNecoSelectedSubject = sub
+                                                waecSubjectMenuExpanded = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
 
-                // Duration / Expiry Options
-                Text("Access Duration: *", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
+                // 4. Duration / Expiry Options
+                Text(
+                    text = "4. Access Duration: *",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                )
                 val durations = listOf(
-                    Pair(null, "Permanent / Lifetime"),
+                    Pair(null, "Lifetime"),
                     Pair(30, "30 Days"),
                     Pair(90, "90 Days"),
                     Pair(365, "1 Year")
@@ -902,22 +1240,23 @@ fun GrantAccessDialog(
                             Text(
                                 text = label,
                                 style = MaterialTheme.typography.labelSmall.copy(
-                                    fontSize = 10.sp,
+                                    fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
                                 ),
                                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                                 maxLines = 1
                             )
                         }
                     }
                 }
 
-                // Reason / Note
+                // 5. Reason / Note
                 OutlinedTextField(
                     value = reason,
                     onValueChange = { reason = it },
-                    label = { Text("Reason / Note (Required for Audit)") },
+                    label = { Text("Reason / Note (Required for Audit) *") },
                     minLines = 2,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -927,12 +1266,19 @@ fun GrantAccessDialog(
             Button(
                 onClick = {
                     val s = selectedStudent
-                    if (s != null) {
-                        onGrant(s, selectedExam, selectedSubject, reason, durationDays)
+                    if (s != null && isFormValid) {
+                        val subjects = if (selectedExam == ExamType.JAMB) {
+                            jambSelectedSubjects
+                        } else {
+                            if (isAllConfiguredSubjects) emptyList() else listOf(waecNecoSelectedSubject)
+                        }
+                        val isExamLevel = selectedExam != ExamType.JAMB && isAllConfiguredSubjects
+                        onGrant(s, selectedExam, subjects, isExamLevel, reason, durationDays)
                     }
                 },
-                enabled = selectedStudent != null && reason.isNotBlank(),
-                colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreenPrimary)
+                enabled = isFormValid,
+                colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreenPrimary),
+                modifier = Modifier.testTag("admin_grant_confirm_button")
             ) {
                 Text("Grant Full Access")
             }
@@ -941,6 +1287,27 @@ fun GrantAccessDialog(
             OutlinedButton(onClick = onDismiss) {
                 Text("Cancel")
             }
+        }
+    )
+}
+
+/**
+ * Backward-compatible overload for legacy single-subject callers.
+ */
+@Composable
+fun GrantAccessDialog(
+    students: List<StudentUser>,
+    preselectedStudent: StudentUser? = null,
+    onDismiss: () -> Unit,
+    onGrantLegacy: (student: StudentUser, examType: ExamType, subjectType: SubjectType, reason: String, durationDays: Int?) -> Unit
+) {
+    GrantAccessDialog(
+        students = students,
+        preselectedStudent = preselectedStudent,
+        onDismiss = onDismiss,
+        onGrant = { s, exam, subs, isExam, reason, dur ->
+            val firstSubject = subs.firstOrNull() ?: SubjectType.ENGLISH
+            onGrantLegacy(s, exam, firstSubject, reason, dur)
         }
     )
 }
