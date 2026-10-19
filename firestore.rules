@@ -89,9 +89,20 @@ service cloud.firestore {
       allow update, delete: if (isAuthenticated() && resource.data.studentUid == request.auth.uid) || isAdmin();
     }
 
+    // ---------------------------------------------------------
+    // 5. System Configuration & Payment Settings (`config/{configDoc}`)
+    // - Authenticated users (students) can read configuration such as payment settings.
+    // - Only administrators can create, update, or write configuration documents.
+    // ---------------------------------------------------------
+    match /config/{configDoc} {
+      allow read: if isAuthenticated() || isAdmin();
+      allow write: if isAdmin();
+    }
+
     // Default deny all other collections
     match /{document=**} {
       allow read, write: if false;
     }
   }
 }
+

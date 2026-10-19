@@ -17,6 +17,7 @@ import com.success.examprep.data.auth.FirebaseAuthRepository
 import com.success.examprep.data.model.ExamType
 import com.success.examprep.data.model.SubjectType
 import com.success.examprep.data.repository.DefaultEntitlementRepository
+import com.success.examprep.data.repository.DefaultPaymentSettingsRepository
 import com.success.examprep.data.repository.DefaultStudentRepository
 import com.success.examprep.data.repository.FirestoreQuestionRepository
 import com.success.examprep.data.repository.FirestoreTestHistoryRepository
@@ -45,6 +46,7 @@ fun AppNavGraph(
     val questionRepository = remember { FirestoreQuestionRepository.getInstance(context) }
     val studentRepository = remember { DefaultStudentRepository.getInstance(context) }
     val entitlementRepository = remember { DefaultEntitlementRepository.getInstance(context) }
+    val paymentSettingsRepository = remember { DefaultPaymentSettingsRepository.getInstance(context) }
 
     // Connect Stage 5 Student Entitlements to AccessManager
     val accessManager = remember { LocalAccessManager.getInstance() }
@@ -207,6 +209,9 @@ fun AppNavGraph(
                 examType = examType,
                 subjectType = subjectType,
                 viewModel = cbtViewModel,
+                paymentSettingsRepository = paymentSettingsRepository,
+                authRepository = authRepository,
+                entitlementRepository = entitlementRepository,
                 onNavigateBack = { navController.popBackStack() }
             )
         }
@@ -285,7 +290,8 @@ fun AppNavGraph(
                             authRepository = authRepository,
                             questionRepository = questionRepository,
                             studentRepository = studentRepository,
-                            entitlementRepository = entitlementRepository
+                            entitlementRepository = entitlementRepository,
+                            paymentSettingsRepository = paymentSettingsRepository
                         ) as T
                     }
                 }

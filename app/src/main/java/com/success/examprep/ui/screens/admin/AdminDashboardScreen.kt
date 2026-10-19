@@ -35,7 +35,15 @@ import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Security
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.filled.AccountBalance
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.ui.text.input.KeyboardType
+import com.success.examprep.data.model.PaymentSettings
 import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VpnKey
@@ -322,6 +330,10 @@ fun AdminDashboardScreen(
                         viewModel = viewModel,
                         uiState = uiState
                     )
+                    AdminTab.PAYMENT_SETTINGS -> AdminPaymentSettingsTab(
+                        viewModel = viewModel,
+                        uiState = uiState
+                    )
                 }
             }
         }
@@ -431,7 +443,10 @@ fun AdminDashboardScreen(
         QuestionImportDialog(
             viewModel = importViewModel,
             onDismiss = { viewModel.closeImportDialog() },
-            onImportSuccess = { viewModel.loadAllData() }
+            onImportSuccess = { 
+                viewModel.loadAllData()
+                viewModel.selectTab(AdminTab.QUALITY_CONTROL)
+            }
         )
     }
 
@@ -1428,3 +1443,312 @@ fun AdminAccessManagementTab(
         }
     }
 }
+
+@Composable
+private fun AdminPaymentSettingsTab(
+    viewModel: AdminViewModel,
+    uiState: AdminUiState
+) {
+    val currentSettings = uiState.paymentSettings
+    var amountInput by remember(currentSettings.amountNaira) {
+        mutableStateOf(currentSettings.amountNaira.toString())
+    }
+    var bankNameInput by remember(currentSettings.bankName) {
+        mutableStateOf(currentSettings.bankName)
+    }
+    var accountNameInput by remember(currentSettings.accountName) {
+        mutableStateOf(currentSettings.accountName)
+    }
+    var accountNumberInput by remember(currentSettings.accountNumber) {
+        mutableStateOf(currentSettings.accountNumber)
+    }
+    var whatsappNumberInput by remember(currentSettings.whatsappNumber) {
+        mutableStateOf(currentSettings.whatsappNumber)
+    }
+    var instructionsInput by remember(currentSettings.paymentInstructions) {
+        mutableStateOf(currentSettings.paymentInstructions)
+    }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .testTag("admin_payment_settings_tab"),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // Header Banner
+        item {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = EmeraldGreenDark),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(20.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            shape = CircleShape,
+                            color = Color.White.copy(alpha = 0.2f),
+                            modifier = Modifier.size(44.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.AccountBalance,
+                                    contentDescription = null,
+                                    tint = AmberTertiary
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = "Configurable Payment Settings",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 18.sp,
+                                color = Color.White
+                            )
+                            Text(
+                                text = "Manage bank details, fees in Nigerian Naira (₦), and WhatsApp support contact.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.White.copy(alpha = 0.85f)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Error message banner
+        uiState.paymentSettingsError?.let { errorMsg ->
+            item {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    modifier = Modifier.fillMaxWidth().testTag("payment_settings_error_banner")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = errorMsg,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            }
+        }
+
+        // Form Fields Card
+        item {
+            Card(
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Text(
+                        text = "Payment Information & Bank Details",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    // Payment Amount
+                    OutlinedTextField(
+                        value = amountInput,
+                        onValueChange = {
+                            amountInput = it.filter { ch -> ch.isDigit() }
+                            viewModel.clearPaymentSettingsError()
+                        },
+                        label = { Text("Payment Amount (₦)") },
+                        placeholder = { Text("2500") },
+                        prefix = { Text("₦ ", fontWeight = FontWeight.Bold) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("admin_payment_amount_input")
+                    )
+
+                    // Bank Name
+                    OutlinedTextField(
+                        value = bankNameInput,
+                        onValueChange = {
+                            bankNameInput = it
+                            viewModel.clearPaymentSettingsError()
+                        },
+                        label = { Text("Bank Name") },
+                        placeholder = { Text("e.g. Zenith Bank") },
+                        leadingIcon = {
+                            Icon(imageVector = Icons.Default.AccountBalance, contentDescription = null)
+                        },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("admin_bank_name_input")
+                    )
+
+                    // Account Name
+                    OutlinedTextField(
+                        value = accountNameInput,
+                        onValueChange = {
+                            accountNameInput = it
+                            viewModel.clearPaymentSettingsError()
+                        },
+                        label = { Text("Account Name") },
+                        placeholder = { Text("e.g. ExamPrep CBT Services") },
+                        leadingIcon = {
+                            Icon(imageVector = Icons.Default.Person, contentDescription = null)
+                        },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("admin_account_name_input")
+                    )
+
+                    // Account Number
+                    OutlinedTextField(
+                        value = accountNumberInput,
+                        onValueChange = {
+                            accountNumberInput = it
+                            viewModel.clearPaymentSettingsError()
+                        },
+                        label = { Text("Account Number") },
+                        placeholder = { Text("e.g. 1012345678") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("admin_account_number_input")
+                    )
+
+                    // WhatsApp Business Number
+                    OutlinedTextField(
+                        value = whatsappNumberInput,
+                        onValueChange = {
+                            whatsappNumberInput = it
+                            viewModel.clearPaymentSettingsError()
+                        },
+                        label = { Text("Administrator WhatsApp Number") },
+                        placeholder = { Text("+2348012345678") },
+                        leadingIcon = {
+                            Icon(imageVector = Icons.Default.Phone, contentDescription = null)
+                        },
+                        supportingText = { Text("Include international country code prefix (e.g. +234...)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("admin_whatsapp_number_input")
+                    )
+
+                    // Payment Instructions
+                    OutlinedTextField(
+                        value = instructionsInput,
+                        onValueChange = {
+                            instructionsInput = it
+                            viewModel.clearPaymentSettingsError()
+                        },
+                        label = { Text("Instructions for Students") },
+                        placeholder = { Text("Describe transfer instructions and receipt upload steps") },
+                        minLines = 3,
+                        modifier = Modifier.fillMaxWidth().testTag("admin_payment_instructions_input")
+                    )
+
+                    // Action Buttons
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                val amount = amountInput.toLongOrNull() ?: 0L
+                                val settingsToSave = PaymentSettings(
+                                    amountNaira = amount,
+                                    bankName = bankNameInput,
+                                    accountName = accountNameInput,
+                                    accountNumber = accountNumberInput,
+                                    whatsappNumber = whatsappNumberInput,
+                                    paymentInstructions = instructionsInput
+                                )
+                                viewModel.savePaymentSettings(settingsToSave)
+                            },
+                            enabled = !uiState.isSavingPaymentSettings,
+                            colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreenPrimary),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .testTag("admin_save_payment_settings_button")
+                        ) {
+                            if (uiState.isSavingPaymentSettings) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    color = Color.White,
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Saving...")
+                            } else {
+                                Icon(imageVector = Icons.Default.Save, contentDescription = null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Save Settings", fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                val defaultSettings = PaymentSettings()
+                                amountInput = defaultSettings.amountNaira.toString()
+                                bankNameInput = defaultSettings.bankName
+                                accountNameInput = defaultSettings.accountName
+                                accountNumberInput = defaultSettings.accountNumber
+                                whatsappNumberInput = defaultSettings.whatsappNumber
+                                instructionsInput = defaultSettings.paymentInstructions
+                                viewModel.clearPaymentSettingsError()
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.height(48.dp).testTag("admin_reset_payment_settings_button")
+                        ) {
+                            Icon(imageVector = Icons.Default.RestartAlt, contentDescription = null)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Reset")
+                        }
+                    }
+                }
+            }
+        }
+
+        // Live Student Preview Card
+        item {
+            Card(
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(imageVector = Icons.Default.Info, contentDescription = null, tint = EmeraldGreenDark)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Live Student Preview",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Text(
+                        text = "Students will see fee: ₦${amountInput.ifBlank { "0" }} payable to $bankNameInput ($accountNumberInput - $accountNameInput).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "WhatsApp destination: $whatsappNumberInput",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = EmeraldGreenDark
+                    )
+                }
+            }
+        }
+    }
+}
+

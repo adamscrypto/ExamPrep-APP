@@ -28,12 +28,16 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+import com.success.examprep.data.model.PaymentSettings
+import com.success.examprep.data.repository.PaymentSettingsRepository
+
 enum class AdminTab(val title: String) {
     OVERVIEW("Overview"),
     QUESTIONS("Question Bank"),
     QUALITY_CONTROL("Quality Control"),
     STUDENTS("Students"),
-    ACCESS("Access Management")
+    ACCESS("Access Management"),
+    PAYMENT_SETTINGS("Payment Settings")
 }
 
 data class AdminStats(
@@ -77,6 +81,9 @@ data class AdminUiState(
     val isImportDialogOpen: Boolean = false,
     val isGrantAccessDialogOpen: Boolean = false,
     val grantTargetStudent: StudentUser? = null,
+    val paymentSettings: PaymentSettings = PaymentSettings(),
+    val isSavingPaymentSettings: Boolean = false,
+    val paymentSettingsError: String? = null,
     val isLoading: Boolean = false,
     val successMessage: String? = null,
     val errorMessage: String? = null
@@ -86,7 +93,8 @@ class AdminViewModel(
     private val authRepository: AuthRepository,
     private val questionRepository: QuestionRepository,
     private val studentRepository: StudentRepository,
-    private val entitlementRepository: EntitlementRepository
+    private val entitlementRepository: EntitlementRepository,
+    private val paymentSettingsRepository: PaymentSettingsRepository? = null
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AdminUiState())
@@ -154,11 +162,14 @@ class AdminViewModel(
                     }
                 }
 
+                val paymentSettings = paymentSettingsRepository?.getPaymentSettings() ?: PaymentSettings()
+
                 _uiState.update {
                     it.copy(
                         questions = questions,
                         students = students,
                         entitlements = entitlements,
+                        paymentSettings = paymentSettings,
                         stats = stats,
                         qualitySummaries = summaries,
                         isLoading = false
@@ -723,6 +734,68 @@ class AdminViewModel(
                 }
             }
         }
+    }
+
+    // --- Administrator Payment Settings Actions ---
+
+    fun loadPaymentSettings() {
+        viewModelScope.launch {
+            val settings = paymentSettingsRepository?.getPaymentSettings() ?: PaymentSettings()
+            _uiState.update { it.copy(paymentSettings = settings, paymentSettingsError = null) }
+        }
+    }
+
+    fun savePaymentSettings(settings: PaymentSettings) {
+        viewModelScope.launch {
+            val validation = settings.validate()
+            if (validation.isFailure) {
+                val errorMsg = validation.exceptionOrNull()?.message ?: "Invalid payment configuration."
+                _uiState.update {
+                    it.copy(
+                        paymentSettingsError = errorMsg,
+                        errorMessage = errorMsg
+                    )
+                }
+                return@launch
+            }
+
+            _uiState.update { it.copy(isSavingPaymentSettings = true, paymentSettingsError = null) }
+            val repo = paymentSettingsRepository
+            if (repo != null) {
+                val result = repo.updatePaymentSettings(settings)
+                if (result.isSuccess) {
+                    val saved = result.getOrThrow()
+                    _uiState.update {
+                        it.copy(
+                            isSavingPaymentSettings = false,
+                            paymentSettings = saved,
+                            successMessage = "Payment settings updated and published successfully."
+                        )
+                    }
+                } else {
+                    val err = result.exceptionOrNull()?.message ?: "Failed to save payment settings."
+                    _uiState.update {
+                        it.copy(
+                            isSavingPaymentSettings = false,
+                            paymentSettingsError = err,
+                            errorMessage = err
+                        )
+                    }
+                }
+            } else {
+                _uiState.update {
+                    it.copy(
+                        isSavingPaymentSettings = false,
+                        paymentSettings = settings,
+                        successMessage = "Payment settings updated locally."
+                    )
+                }
+            }
+        }
+    }
+
+    fun clearPaymentSettingsError() {
+        _uiState.update { it.copy(paymentSettingsError = null) }
     }
 
     fun clearFeedbackMessages() {

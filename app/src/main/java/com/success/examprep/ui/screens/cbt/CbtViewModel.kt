@@ -301,14 +301,12 @@ class CbtViewModel(
     }
 
     /**
-     * Unlocks full access for a given subject type.
+     * Insecure local voucher activation removed in Stage 2.
+     * All access is strictly authorized via trusted admin entitlements.
      */
+    @Deprecated("Insecure local unlock removed in Stage 2. Access must be verified via admin entitlements.")
     fun unlockSubject(subjectType: SubjectType) {
-        val currentState = _uiState.value
-        accessManager.setFullAccess(currentState.examType, subjectType, true)
-        if (currentState.subject?.id == subjectType.id) {
-            _uiState.update { it.copy(hasFullAccess = true) }
-        }
+        // Deliberately inert for security: local UI actions cannot bypass trusted admin entitlements.
     }
 
     /**

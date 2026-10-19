@@ -197,7 +197,6 @@ class QuestionImportViewModel(
                         failedCount = current.summary.invalidRows
                     )
                 )
-                onImportSuccess()
             } else {
                 _uiState.value = QuestionImportUiState.Error(
                     result.exceptionOrNull()?.message ?: "An error occurred while saving imported questions."

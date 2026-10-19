@@ -68,6 +68,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -212,6 +213,7 @@ fun QuestionImportDialog(
                             result = state.result,
                             onDone = {
                                 viewModel.reset()
+                                onImportSuccess()
                                 onDismiss()
                             }
                         )
@@ -801,14 +803,14 @@ fun ImportCompletedView(
     ) {
         Surface(
             shape = CircleShape,
-            color = EmeraldGreenPrimary.copy(alpha = 0.15f),
+            color = if (result.importedCount > 0) EmeraldGreenPrimary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.error.copy(alpha = 0.15f),
             modifier = Modifier.size(80.dp)
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(
-                    imageVector = Icons.Default.CheckCircle,
+                    imageVector = if (result.importedCount > 0) Icons.Default.CheckCircle else Icons.Default.Warning,
                     contentDescription = null,
-                    tint = EmeraldGreenPrimary,
+                    tint = if (result.importedCount > 0) EmeraldGreenPrimary else MaterialTheme.colorScheme.error,
                     modifier = Modifier.size(48.dp)
                 )
             }
@@ -817,24 +819,30 @@ fun ImportCompletedView(
         Spacer(modifier = Modifier.height(20.dp))
 
         Text(
-            text = "Import Completed Successfully!",
+            text = if (result.importedCount > 0) "Import Completed Successfully" else "Import Completed with 0 Saved Questions",
             style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-            color = EmeraldGreenDark
+            color = if (result.importedCount > 0) EmeraldGreenDark else MaterialTheme.colorScheme.error,
+            textAlign = TextAlign.Center
         )
 
         Spacer(modifier = Modifier.height(6.dp))
 
         Text(
-            text = "Questions have been validated and saved to the CBT Question Bank.",
-            style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
+            text = if (result.importedCount > 0)
+                "Imported questions are not yet available to students. Open Admin Dashboard → Quality Control → Pending Review to review and approve them."
+            else
+                "No questions were saved. All processed rows were either duplicates or invalid.",
+            style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant),
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 8.dp)
         )
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
         Card(
             shape = RoundedCornerShape(14.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-            modifier = Modifier.fillMaxWidth(0.9f)
+            modifier = Modifier.fillMaxWidth(0.95f)
         ) {
             Column(
                 modifier = Modifier.padding(16.dp),
@@ -842,24 +850,41 @@ fun ImportCompletedView(
             ) {
                 ReportRow(label = "Spreadsheet File", value = result.fileName)
                 ReportRow(label = "Total Rows Processed", value = result.totalRows.toString())
-                ReportRow(label = "Successfully Imported", value = result.importedCount.toString(), isHighlight = true)
+                ReportRow(label = "Questions Saved", value = result.importedCount.toString(), isHighlight = true)
+                ReportRow(label = "Pending Review", value = result.importedCount.toString())
                 ReportRow(label = "Duplicates Skipped", value = result.skippedDuplicatesCount.toString())
                 ReportRow(label = "Invalid Rows Skipped", value = result.failedCount.toString())
             }
         }
 
-        Spacer(modifier = Modifier.height(28.dp))
+        Spacer(modifier = Modifier.height(24.dp))
 
-        Button(
-            onClick = onDone,
-            colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreenPrimary),
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier
-                .fillMaxWidth(0.7f)
-                .height(48.dp)
-                .testTag("import_done_button")
-        ) {
-            Text("Done & Refresh Question Bank", fontWeight = FontWeight.Bold)
+        if (result.importedCount > 0) {
+            Button(
+                onClick = onDone,
+                colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreenPrimary),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth(0.8f)
+                    .height(48.dp)
+                    .testTag("go_to_qc_button")
+            ) {
+                Icon(imageVector = Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Go to Quality Control", fontWeight = FontWeight.Bold)
+            }
+        } else {
+            Button(
+                onClick = onDone,
+                colors = ButtonDefaults.buttonColors(containerColor = EmeraldGreenPrimary),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth(0.8f)
+                    .height(48.dp)
+                    .testTag("import_done_button")
+            ) {
+                Text("Done", fontWeight = FontWeight.Bold)
+            }
         }
     }
 }
